@@ -1,0 +1,73 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: zss-agent
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.deepseek.autoconfigure.DeepSeekChatAutoConfiguration
+      - org.springframework.ai.vectorstore.milvus.autoconfigure.MilvusVectorStoreAutoConfiguration
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=10m
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/zss_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:12345678}
+    driver-class-name: ${MYSQL_DRIVER:com.mysql.cj.jdbc.Driver}
+  sql:
+    init:
+      mode: ${SQL_INIT_MODE:never}
+      schema-locations: classpath:db/migration/V1__init.sql
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:}
+      chat:
+        options:
+          model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+          temperature: 0.8
+    vectorstore:
+      milvus:
+        client:
+          host: ${MILVUS_HOST:localhost}
+          port: ${MILVUS_PORT:19530}
+          username: ${MILVUS_USERNAME:root}
+          password: ${MILVUS_PASSWORD:milvus}
+        databaseName: ${MILVUS_DATABASE:default}
+        collectionName: ${MILVUS_COLLECTION:zss_memory}
+        embeddingDimension: ${EMBEDDING_DIMENSION:1536}
+        indexType: IVF_FLAT
+        metricType: COSINE
+
+sisi:
+  assistant:
+    girlfriend-name: ${SISI_NAME:思思}
+    life-prefix: 亲爱的思思主人
+    max-context-messages: ${CHAT_CONTEXT_MESSAGES:10}
+    max-context-chars: ${CHAT_CONTEXT_CHARS:6000}
+    summary-trigger-messages: ${SUMMARY_TRIGGER_MESSAGES:10}
+    importance-extract-enabled: ${IMPORTANCE_EXTRACT_ENABLED:true}
+  deepseek:
+    api-key: ${DEEPSEEK_API_KEY:}
+    base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+    model: ${DEEPSEEK_MODEL:deepseek-chat}
+    enabled: ${DEEPSEEK_ENABLED:true}
+  firecrawl:
+    api-key: ${FIRECRAWL_API_KEY:}
+    enabled: ${FIRECRAWL_ENABLED:false}
+  memory:
+    top-k: ${MEMORY_TOP_K:5}
+    importance-threshold: ${MEMORY_IMPORTANCE_THRESHOLD:0.6}
+    summary-max-messages: ${MEMORY_SUMMARY_MAX_MESSAGES:20}
+  scheduler:
+    morning-cron: ${MORNING_CRON:0 10 8 * * *}
+    night-cron: ${NIGHT_CRON:0 30 22 * * *}
+    periodic-summary-cron: ${PERIODIC_SUMMARY_CRON:0 0 3 * * *}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
