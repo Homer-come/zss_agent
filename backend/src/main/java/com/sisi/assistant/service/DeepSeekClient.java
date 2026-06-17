@@ -98,8 +98,8 @@ public class DeepSeekClient {
      * 本地降级也拆成多个片段，确保前端仍然看到”流式输出”的体验。
      */
     private Flux<String> localFallback(String content) {
-        String safe = StringUtils.hasText(content) ? content : “我在，这次先用本地降级回复陪你把事情处理好。”;
-        return Flux.fromArray(safe.split(“(?<=。|！|？|\\n)”));
+        String safe = StringUtils.hasText(content) ? content : "我在，这次先用本地降级回复陪你把事情处理好。";
+        return Flux.fromArray(safe.split("(?<=[。！？\\n])"));
     }
 
     /**
@@ -109,32 +109,32 @@ public class DeepSeekClient {
      */
     public Mono<String> chat(String systemPrompt, String userPrompt, String fallback) {
         if (!properties.isEnabled() || !StringUtils.hasText(properties.getApiKey())) {
-            return Mono.just(fallback != null ? fallback : “”);
+            return Mono.just(fallback != null ? fallback : "");
         }
 
         Map<String, Object> body = Map.of(
-                “model”, properties.getModel(),
-                “stream”, false,
-                “messages”, List.of(
-                        Map.of(“role”, “system”, “content”, systemPrompt),
-                        Map.of(“role”, “user”, “content”, userPrompt)
+                "model", properties.getModel(),
+                "stream", false,
+                "messages", List.of(
+                        Map.of("role", "system", "content", systemPrompt),
+                        Map.of("role", "user", "content", userPrompt)
                 )
         );
 
         return webClient.post()
-                .uri(“/chat/completions”)
+                .uri("/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON)
                 .headers(headers -> headers.setBearerAuth(properties.getApiKey()))
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(JsonNode.class)
-                .map(root -> root.path(“choices”).path(0).path(“message”).path(“content”).asText(“”))
+                .map(root -> root.path("choices").path(0).path("message").path("content").asText(""))
                 .filter(StringUtils::hasText)
-                .defaultIfEmpty(fallback != null ? fallback : “”)
+                .defaultIfEmpty(fallback != null ? fallback : "")
                 .onErrorResume(ex -> {
-                    log.warn(“DeepSeek non-streaming chat failed, using fallback”, ex);
-                    return Mono.just(fallback != null ? fallback : “”);
+                    log.warn("DeepSeek non-streaming chat failed, using fallback", ex);
+                    return Mono.just(fallback != null ? fallback : "");
                 });
     }
 }

@@ -1,11 +1,15 @@
 package com.sisi.assistant.agent.memory;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.sisi.assistant.persistence.entity.UserProfileEntity;
+import com.sisi.assistant.persistence.mapper.UserProfileMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,11 +31,11 @@ public class UserProfileManager {
 
     private static final Logger log = LoggerFactory.getLogger(UserProfileManager.class);
 
-    private final JdbcTemplate jdbcTemplate;
+    private final UserProfileMapper userProfileMapper;
     private final CopyOnWriteArrayList<Map.Entry<String, String>> fallbackStore = new CopyOnWriteArrayList<>();
 
-    public UserProfileManager(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public UserProfileManager(UserProfileMapper userProfileMapper) {
+        this.userProfileMapper = userProfileMapper;
     }
 
     /**
@@ -39,11 +43,11 @@ public class UserProfileManager {
      */
     public Map<String, String> loadProfile() {
         try {
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                    "SELECT profile_key, profile_value FROM user_profile ORDER BY confidence DESC");
+            List<UserProfileEntity> rows = userProfileMapper.selectList(new LambdaQueryWrapper<UserProfileEntity>()
+                    .orderByDesc(UserProfileEntity::getConfidence));
             Map<String, String> profile = new LinkedHashMap<>();
-            for (Map<String, Object> row : rows) {
-                profile.put((String) row.get("profile_key"), (String) row.get("profile_value"));
+            for (UserProfileEntity row : rows) {
+                profile.put(row.getProfileKey(), row.getProfileValue());
             }
             return profile;
         } catch (DataAccessException ex) {
@@ -64,13 +68,26 @@ public class UserProfileManager {
             return;
         }
         try {
-            int updated = jdbcTemplate.update(
-                    "UPDATE user_profile SET profile_value = ?, confidence = LEAST(confidence + 1, 10), source_memory_id = ?, updated_at = NOW() WHERE profile_key = ?",
-                    profileValue, sourceMemoryId, profileKey);
+            UserProfileEntity current = userProfileMapper.selectOne(new LambdaQueryWrapper<UserProfileEntity>()
+                    .eq(UserProfileEntity::getProfileKey, profileKey));
+            int updated = 0;
+            if (current != null) {
+                Integer confidence = current.getConfidence() == null ? 5 : current.getConfidence();
+                updated = userProfileMapper.update(new LambdaUpdateWrapper<UserProfileEntity>()
+                        .set(UserProfileEntity::getProfileValue, profileValue)
+                        .set(UserProfileEntity::getConfidence, Math.min(confidence + 1, 10))
+                        .set(UserProfileEntity::getSourceMemoryId, sourceMemoryId)
+                        .set(UserProfileEntity::getUpdatedAt, LocalDateTime.now())
+                        .eq(UserProfileEntity::getProfileKey, profileKey));
+            }
             if (updated == 0) {
-                jdbcTemplate.update(
-                        "INSERT INTO user_profile(profile_key, profile_value, confidence, source_memory_id) VALUES (?, ?, 5, ?)",
-                        profileKey, profileValue, sourceMemoryId);
+                UserProfileEntity entity = new UserProfileEntity();
+                entity.setProfileKey(profileKey);
+                entity.setProfileValue(profileValue);
+                entity.setConfidence(5);
+                entity.setSourceMemoryId(sourceMemoryId);
+                entity.setUpdatedAt(LocalDateTime.now());
+                userProfileMapper.insert(entity);
                 log.info("新增用户画像: {} = {}", profileKey, profileValue);
             } else {
                 log.debug("更新用户画像: {} = {} (confidence+1)", profileKey, profileValue);

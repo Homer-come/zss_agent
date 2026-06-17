@@ -1,21 +1,19 @@
 package com.sisi.assistant.agent.memory;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.sisi.assistant.common.dto.MemoryItem;
 import com.sisi.assistant.common.dto.MemoryRequest;
 import com.sisi.assistant.common.dto.MemoryType;
+import com.sisi.assistant.persistence.entity.ChatRecordEntity;
+import com.sisi.assistant.persistence.entity.MemoryItemEntity;
+import com.sisi.assistant.persistence.mapper.ChatRecordMapper;
+import com.sisi.assistant.persistence.mapper.MemoryItemMapper;
 import com.sisi.assistant.rag.MemorySearchResult;
 import com.sisi.assistant.rag.RagService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
 
-import java.sql.Date;
-import java.sql.PreparedStatement;
-import java.sql.Statement;
-import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,13 +23,18 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 public class MemoryAgent {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final MemoryItemMapper memoryItemMapper;
+    private final ChatRecordMapper chatRecordMapper;
     private final RagService ragService;
     private final int topK;
     private final CopyOnWriteArrayList<MemoryItem> fallbackStore = new CopyOnWriteArrayList<>();
 
-    public MemoryAgent(JdbcTemplate jdbcTemplate, RagService ragService, @Value("${sisi.memory.top-k:5}") int topK) {
-        this.jdbcTemplate = jdbcTemplate;
+    public MemoryAgent(MemoryItemMapper memoryItemMapper,
+                       ChatRecordMapper chatRecordMapper,
+                       RagService ragService,
+                       @Value("${sisi.memory.top-k:5}") int topK) {
+        this.memoryItemMapper = memoryItemMapper;
+        this.chatRecordMapper = chatRecordMapper;
         this.ragService = ragService;
         this.topK = topK;
     }
@@ -75,19 +78,12 @@ public class MemoryAgent {
      */
     public List<MemoryItem> loadAll() {
         try {
-            return jdbcTemplate.query("SELECT * FROM memory_item ORDER BY importance DESC, created_at DESC",
-                    (rs, rowNum) -> new MemoryItem(
-                            rs.getLong("id"),
-                            MemoryType.valueOf(rs.getString("memory_type")),
-                            rs.getString("title"),
-                            rs.getString("content"),
-                            rs.getDate("event_date") == null ? null : rs.getDate("event_date").toLocalDate(),
-                            rs.getString("emotional_tone"),
-                            rs.getInt("importance"),
-                            rs.getString("session_id"),
-                            rs.getObject("importance_score") != null ? rs.getDouble("importance_score") : null,
-                            rs.getTimestamp("created_at").toLocalDateTime()
-                    ));
+            return memoryItemMapper.selectList(new LambdaQueryWrapper<MemoryItemEntity>()
+                            .orderByDesc(MemoryItemEntity::getImportance)
+                            .orderByDesc(MemoryItemEntity::getCreatedAt))
+                    .stream()
+                    .map(this::toDto)
+                    .toList();
         } catch (DataAccessException ex) {
             return List.copyOf(fallbackStore);
         }
@@ -132,24 +128,18 @@ public class MemoryAgent {
     private MemoryItem insert(MemoryRequest request) {
         int importance = request.importance() == null ? 5 : Math.max(1, Math.min(10, request.importance()));
         try {
-            KeyHolder keyHolder = new GeneratedKeyHolder();
-            jdbcTemplate.update(connection -> {
-                PreparedStatement ps = connection.prepareStatement("""
-                        INSERT INTO memory_item(memory_type, title, content, event_date, emotional_tone, importance, session_id, embedding_text)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """, Statement.RETURN_GENERATED_KEYS);
-                ps.setString(1, request.type().name());
-                ps.setString(2, request.title());
-                ps.setString(3, request.content());
-                ps.setDate(4, request.eventDate() == null ? null : Date.valueOf(request.eventDate()));
-                ps.setString(5, request.emotionalTone());
-                ps.setInt(6, importance);
-                ps.setString(7, request.sessionId());
-                ps.setString(8, "%s %s".formatted(request.title(), request.content()));
-                return ps;
-            }, keyHolder);
-            Number key = keyHolder.getKey();
-            return new MemoryItem(key == null ? null : key.longValue(), request.type(), request.title(), request.content(),
+            MemoryItemEntity entity = new MemoryItemEntity();
+            entity.setMemoryType(request.type().name());
+            entity.setTitle(request.title());
+            entity.setContent(request.content());
+            entity.setEventDate(request.eventDate());
+            entity.setEmotionalTone(request.emotionalTone());
+            entity.setImportance(importance);
+            entity.setSessionId(request.sessionId());
+            entity.setEmbeddingText("%s %s".formatted(request.title(), request.content()));
+            entity.setCreatedAt(LocalDateTime.now());
+            memoryItemMapper.insert(entity);
+            return new MemoryItem(entity.getId(), request.type(), request.title(), request.content(),
                     request.eventDate(), request.emotionalTone(), importance, request.sessionId(),
                     null, LocalDateTime.now());
         } catch (DataAccessException ex) {
@@ -176,11 +166,16 @@ public class MemoryAgent {
      */
     public void saveChat(String route, String userMessage, String assistantMessage, String sessionId) {
         try {
-            jdbcTemplate.update(“INSERT INTO chat_record(route, session_id, user_message, assistant_message, created_at) VALUES (?, ?, ?, ?, ?)”,
-                    route, sessionId, userMessage, assistantMessage, Timestamp.valueOf(LocalDateTime.now()));
+            ChatRecordEntity record = new ChatRecordEntity();
+            record.setRoute(route);
+            record.setSessionId(sessionId);
+            record.setUserMessage(userMessage);
+            record.setAssistantMessage(assistantMessage);
+            record.setCreatedAt(LocalDateTime.now());
+            chatRecordMapper.insert(record);
         } catch (DataAccessException ignored) {
             MemoryItem item = new MemoryItem((long) fallbackStore.size() + 1, MemoryType.CHAT,
-                    “聊天记录”, userMessage + “\n” + assistantMessage, LocalDate.now(), “neutral”, 3,
+                    "聊天记录", userMessage + "\n" + assistantMessage, LocalDate.now(), "neutral", 3,
                     sessionId, null, LocalDateTime.now());
             fallbackStore.add(item);
         }
@@ -193,6 +188,21 @@ public class MemoryAgent {
         return Map.of(
                 "memoryCount", loadAll().size(),
                 "rag", "in-memory fallback with Milvus-ready configuration"
+        );
+    }
+
+    private MemoryItem toDto(MemoryItemEntity entity) {
+        return new MemoryItem(
+                entity.getId(),
+                MemoryType.valueOf(entity.getMemoryType()),
+                entity.getTitle(),
+                entity.getContent(),
+                entity.getEventDate(),
+                entity.getEmotionalTone(),
+                entity.getImportance() == null ? 5 : entity.getImportance(),
+                entity.getSessionId(),
+                entity.getImportanceScore(),
+                entity.getCreatedAt()
         );
     }
 }

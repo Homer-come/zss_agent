@@ -1,13 +1,15 @@
 package com.sisi.assistant.agent.memory;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.sisi.assistant.persistence.entity.SessionStateEntity;
+import com.sisi.assistant.persistence.mapper.SessionStateMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.sql.Timestamp;
-import java.util.Map;
+import java.time.LocalDateTime;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -29,11 +31,11 @@ public class SessionStateManager {
 
     private static final Logger log = LoggerFactory.getLogger(SessionStateManager.class);
 
-    private final JdbcTemplate jdbcTemplate;
+    private final SessionStateMapper sessionStateMapper;
     private final ConcurrentHashMap<String, SessionState> cache = new ConcurrentHashMap<>();
 
-    public SessionStateManager(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public SessionStateManager(SessionStateMapper sessionStateMapper) {
+        this.sessionStateMapper = sessionStateMapper;
     }
 
     /**
@@ -60,18 +62,12 @@ public class SessionStateManager {
         state.updatedAt = System.currentTimeMillis();
 
         try {
-            jdbcTemplate.update("""
-                    INSERT INTO session_state(session_id, current_topic, emotional_state, task_context, last_message_index, updated_at)
-                    VALUES (?, ?, ?, ?, ?, NOW())
-                    ON DUPLICATE KEY UPDATE
-                        current_topic = VALUES(current_topic),
-                        emotional_state = VALUES(emotional_state),
-                        task_context = VALUES(task_context),
-                        last_message_index = VALUES(last_message_index),
-                        updated_at = NOW()
-                    """,
-                    sessionId, state.currentTopic, state.emotionalState,
-                    state.taskContext, state.lastMessageIndex);
+            SessionStateEntity entity = toEntity(sessionId, state);
+            int updated = sessionStateMapper.update(entity, new LambdaUpdateWrapper<SessionStateEntity>()
+                    .eq(SessionStateEntity::getSessionId, sessionId));
+            if (updated == 0) {
+                sessionStateMapper.insert(entity);
+            }
         } catch (DataAccessException ex) {
             log.debug("会话状态持久化失败，内存缓存仍然有效 (sessionId={})", sessionId);
         }
@@ -87,9 +83,10 @@ public class SessionStateManager {
         SessionState state = getState(sessionId);
         state.emotionalState = emotion;
         try {
-            jdbcTemplate.update(
-                    "UPDATE session_state SET emotional_state = ?, updated_at = NOW() WHERE session_id = ?",
-                    emotion, sessionId);
+            sessionStateMapper.update(new LambdaUpdateWrapper<SessionStateEntity>()
+                    .set(SessionStateEntity::getEmotionalState, emotion)
+                    .set(SessionStateEntity::getUpdatedAt, LocalDateTime.now())
+                    .eq(SessionStateEntity::getSessionId, sessionId));
         } catch (DataAccessException ignored) {
         }
     }
@@ -114,18 +111,32 @@ public class SessionStateManager {
 
     private SessionState loadOrCreate(String sessionId) {
         try {
-            Map<String, Object> row = jdbcTemplate.queryForMap(
-                    "SELECT * FROM session_state WHERE session_id = ?", sessionId);
+            SessionStateEntity row = sessionStateMapper.selectOne(new LambdaQueryWrapper<SessionStateEntity>()
+                    .eq(SessionStateEntity::getSessionId, sessionId));
+            if (row == null) {
+                return SessionState.defaultState();
+            }
             return new SessionState(
-                    (String) row.get("current_topic"),
-                    (String) row.get("emotional_state"),
-                    (String) row.get("task_context"),
-                    ((Number) row.get("last_message_index")).intValue()
+                    row.getCurrentTopic(),
+                    row.getEmotionalState(),
+                    row.getTaskContext(),
+                    row.getLastMessageIndex() == null ? 0 : row.getLastMessageIndex()
             );
         } catch (DataAccessException ex) {
             // 表不存在或无记录，返回默认状态
             return SessionState.defaultState();
         }
+    }
+
+    private SessionStateEntity toEntity(String sessionId, SessionState state) {
+        SessionStateEntity entity = new SessionStateEntity();
+        entity.setSessionId(sessionId);
+        entity.setCurrentTopic(state.currentTopic);
+        entity.setEmotionalState(state.emotionalState);
+        entity.setTaskContext(state.taskContext);
+        entity.setLastMessageIndex(state.lastMessageIndex);
+        entity.setUpdatedAt(LocalDateTime.now());
+        return entity;
     }
 
     /**
@@ -135,6 +146,7 @@ public class SessionStateManager {
         public String currentTopic;
         public String emotionalState;
         public String taskContext;
+        public String currentRoute;
         public int lastMessageIndex;
         public long updatedAt;
 

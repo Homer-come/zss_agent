@@ -1,17 +1,20 @@
 package com.sisi.assistant.agent.memory;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.sisi.assistant.persistence.entity.ChatRecordEntity;
+import com.sisi.assistant.persistence.entity.ConversationSummaryEntity;
+import com.sisi.assistant.persistence.mapper.ChatRecordMapper;
+import com.sisi.assistant.persistence.mapper.ConversationSummaryMapper;
 import com.sisi.assistant.service.DeepSeekClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 对话摘要 Agent：将多轮历史对话压缩为简洁摘要，替代原始消息作为长期上下文。
@@ -36,16 +39,19 @@ public class SummaryAgent {
             """;
 
     private final DeepSeekClient deepSeekClient;
-    private final JdbcTemplate jdbcTemplate;
+    private final ChatRecordMapper chatRecordMapper;
+    private final ConversationSummaryMapper conversationSummaryMapper;
     private final int summaryTriggerMessages;
     private final int summaryMaxMessages;
 
     public SummaryAgent(DeepSeekClient deepSeekClient,
-                       JdbcTemplate jdbcTemplate,
+                       ChatRecordMapper chatRecordMapper,
+                       ConversationSummaryMapper conversationSummaryMapper,
                        @Value("${sisi.assistant.summary-trigger-messages:10}") int summaryTriggerMessages,
                        @Value("${sisi.memory.summary-max-messages:20}") int summaryMaxMessages) {
         this.deepSeekClient = deepSeekClient;
-        this.jdbcTemplate = jdbcTemplate;
+        this.chatRecordMapper = chatRecordMapper;
+        this.conversationSummaryMapper = conversationSummaryMapper;
         this.summaryTriggerMessages = summaryTriggerMessages;
         this.summaryMaxMessages = summaryMaxMessages;
     }
@@ -127,11 +133,12 @@ public class SummaryAgent {
      */
     public String loadLatestSummary(String sessionId) {
         try {
-            return jdbcTemplate.query(
-                    "SELECT content FROM conversation_summary WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-                    (rs, rowNum) -> rs.getString("content"),
-                    sessionId
-            ).stream().findFirst().orElse("");
+            ConversationSummaryEntity summary = conversationSummaryMapper.selectOne(new LambdaQueryWrapper<ConversationSummaryEntity>()
+                    .select(ConversationSummaryEntity::getContent)
+                    .eq(ConversationSummaryEntity::getSessionId, sessionId)
+                    .orderByDesc(ConversationSummaryEntity::getCreatedAt)
+                    .last("LIMIT 1"));
+            return summary == null ? "" : summary.getContent();
         } catch (DataAccessException ex) {
             return "";
         }
@@ -143,18 +150,15 @@ public class SummaryAgent {
     private String loadDialogueForSummary(String sessionId, int rangeStart, int rangeEnd) {
         try {
             // 先查该 session 的所有聊天记录，按时间排序
-            List<Map<String, Object>> records = jdbcTemplate.query(
-                    "SELECT user_message, assistant_message FROM chat_record WHERE session_id = ? ORDER BY created_at ASC LIMIT ?",
-                    (rs, rowNum) -> Map.of(
-                            "user", rs.getString("user_message"),
-                            "assistant", rs.getString("assistant_message")
-                    ),
-                    sessionId, summaryMaxMessages
-            );
+            List<ChatRecordEntity> records = chatRecordMapper.selectList(new LambdaQueryWrapper<ChatRecordEntity>()
+                    .select(ChatRecordEntity::getUserMessage, ChatRecordEntity::getAssistantMessage)
+                    .eq(ChatRecordEntity::getSessionId, sessionId)
+                    .orderByAsc(ChatRecordEntity::getCreatedAt)
+                    .last("LIMIT " + summaryMaxMessages));
             StringBuilder sb = new StringBuilder();
-            for (Map<String, Object> record : records) {
-                String user = (String) record.get("user");
-                String assistant = (String) record.get("assistant");
+            for (ChatRecordEntity record : records) {
+                String user = record.getUserMessage();
+                String assistant = record.getAssistantMessage();
                 if (user != null && !user.isBlank()) {
                     sb.append("用户: ").append(user).append('\n');
                 }
@@ -174,18 +178,15 @@ public class SummaryAgent {
      */
     private String loadDialogueSince(LocalDateTime since) {
         try {
-            List<Map<String, Object>> records = jdbcTemplate.query(
-                    "SELECT user_message, assistant_message FROM chat_record WHERE created_at > ? ORDER BY created_at ASC LIMIT ?",
-                    (rs, rowNum) -> Map.of(
-                            "user", rs.getString("user_message"),
-                            "assistant", rs.getString("assistant_message")
-                    ),
-                    Timestamp.valueOf(since), summaryMaxMessages
-            );
+            List<ChatRecordEntity> records = chatRecordMapper.selectList(new LambdaQueryWrapper<ChatRecordEntity>()
+                    .select(ChatRecordEntity::getUserMessage, ChatRecordEntity::getAssistantMessage)
+                    .gt(ChatRecordEntity::getCreatedAt, since)
+                    .orderByAsc(ChatRecordEntity::getCreatedAt)
+                    .last("LIMIT " + summaryMaxMessages));
             StringBuilder sb = new StringBuilder();
-            for (Map<String, Object> record : records) {
-                String user = (String) record.get("user");
-                String assistant = (String) record.get("assistant");
+            for (ChatRecordEntity record : records) {
+                String user = record.getUserMessage();
+                String assistant = record.getAssistantMessage();
                 if (user != null && !user.isBlank()) {
                     sb.append("用户: ").append(user).append('\n');
                 }
@@ -202,10 +203,8 @@ public class SummaryAgent {
 
     private int countSessionMessages(String sessionId) {
         try {
-            Integer count = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM chat_record WHERE session_id = ?",
-                    Integer.class, sessionId);
-            return count != null ? count : 0;
+            return Math.toIntExact(chatRecordMapper.selectCount(new LambdaQueryWrapper<ChatRecordEntity>()
+                    .eq(ChatRecordEntity::getSessionId, sessionId)));
         } catch (DataAccessException ex) {
             return 0;
         }
@@ -213,10 +212,17 @@ public class SummaryAgent {
 
     private int getLastSummaryEnd(String sessionId) {
         try {
-            Integer end = jdbcTemplate.queryForObject(
-                    "SELECT COALESCE(MAX(message_range_end), 0) FROM conversation_summary WHERE session_id = ? AND summary_type = 'turn'",
-                    Integer.class, sessionId);
-            return end != null ? end : 0;
+            List<Object> ends = conversationSummaryMapper.selectObjs(Wrappers.<ConversationSummaryEntity>lambdaQuery()
+                    .select(ConversationSummaryEntity::getMessageRangeEnd)
+                    .eq(ConversationSummaryEntity::getSessionId, sessionId)
+                    .eq(ConversationSummaryEntity::getSummaryType, "turn")
+                    .isNotNull(ConversationSummaryEntity::getMessageRangeEnd)
+                    .orderByDesc(ConversationSummaryEntity::getMessageRangeEnd)
+                    .last("LIMIT 1"));
+            if (ends.isEmpty() || ends.get(0) == null) {
+                return 0;
+            }
+            return ((Number) ends.get(0)).intValue();
         } catch (DataAccessException ex) {
             return 0;
         }
@@ -224,10 +230,14 @@ public class SummaryAgent {
 
     private void saveSummary(String sessionId, String type, String content, Integer rangeStart, Integer rangeEnd) {
         try {
-            jdbcTemplate.update(
-                    "INSERT INTO conversation_summary(session_id, summary_type, content, message_range_start, message_range_end, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    sessionId, type, content, rangeStart, rangeEnd, Timestamp.valueOf(LocalDateTime.now())
-            );
+            ConversationSummaryEntity summary = new ConversationSummaryEntity();
+            summary.setSessionId(sessionId);
+            summary.setSummaryType(type);
+            summary.setContent(content);
+            summary.setMessageRangeStart(rangeStart);
+            summary.setMessageRangeEnd(rangeEnd);
+            summary.setCreatedAt(LocalDateTime.now());
+            conversationSummaryMapper.insert(summary);
         } catch (DataAccessException ex) {
             log.warn("保存摘要失败 (sessionId={}, type={})", sessionId, type, ex);
         }
