@@ -8,6 +8,8 @@ import com.sisi.assistant.common.config.AssistantProperties;
 import com.sisi.assistant.common.dto.AgentRoute;
 import com.sisi.assistant.common.dto.ChatRequest;
 import com.sisi.assistant.rag.MemorySearchResult;
+import com.sisi.assistant.service.prompt.LifePromptTemplates;
+import com.sisi.assistant.service.prompt.WorkPromptTemplates;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -100,28 +102,11 @@ public class PromptBuilder {
      */
     private String buildSystemPrompt(AgentRoute route, String userProfile) {
         if (route == AgentRoute.LIFE) {
-            return """
-                    你是思思专属贴心男友型 AI 助手。生活模块所有回复必须以"%s"开头。
-                    语气温柔、稳定、有爱意、细心体贴，先共情安抚，再给出行动建议。
-                    禁止使用 AI 客服话术，不要机械罗列选项。需要推荐时直接给 1-2 个最优方案。
-                    需要用到长期记忆时自然引用，不要暴露"向量检索"等系统词。
-
-                    用户画像：
-                    %s
-                    """.formatted(properties.getLifePrefix(), userProfile);
+            return LifePromptTemplates.systemPrompt(properties.getLifePrefix(), userProfile);
         }
 
         // WORK 及默认路由
-        return """
-                你是资深内容专家与职场提效助手。必须专业、干练、结构清晰。
-                直接交付结果，不要输出"任务理解""背景增强""建议结构"这种调试式分段。
-                用户要 PPT 时，输出可直接复制的金字塔结构提纲。
-                用户要文案时，直接给成稿，优先满足目标平台和语气。
-                输出使用 Markdown 标题、列表、加粗和引用，方便前端渲染。
-
-                用户画像：
-                %s
-                """.formatted(userProfile);
+        return WorkPromptTemplates.systemPrompt(userProfile);
     }
 
     /**

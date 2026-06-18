@@ -5,6 +5,7 @@ import com.sisi.assistant.common.dto.AnniversaryRequest;
 import com.sisi.assistant.common.dto.MemoryItem;
 import com.sisi.assistant.common.dto.MemoryRequest;
 import com.sisi.assistant.common.dto.MemoryType;
+import com.sisi.assistant.service.prompt.AnniversaryPromptTemplates;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -63,9 +64,6 @@ public class AnniversaryAgent {
     public String buildReminderMessage(MemoryItem item, LocalDate today) {
         int days = daysUntilNext(item.eventDate(), today);
         String dayText = days == 0 ? "就是今天" : "还有 " + days + " 天";
-        return """
-                亲爱的思思主人，%s %s啦。
-                我已经帮你想好了：礼物可以选一束温柔色系鲜花或一件她最近念叨过的小物；约会适合安排轻松晚餐加散步；祝福文案就写得真诚一点，不堆漂亮话，重点是“我记得、我在意、我会一直陪你”。
-                """.formatted(item.title(), dayText);
+        return AnniversaryPromptTemplates.reminderMessage(item.title(), dayText);
     }
 }

@@ -5,6 +5,7 @@ import com.sisi.assistant.common.dto.ChatChunk;
 import com.sisi.assistant.service.DeepSeekClient;
 import com.sisi.assistant.service.FirecrawlSearchService;
 import com.sisi.assistant.service.PromptBuilder;
+import com.sisi.assistant.service.prompt.WorkPromptTemplates;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
@@ -54,69 +55,20 @@ public class WorkAgent {
      */
     private String buildFallback(String userMessage, String background) {
         if (matchesAny(userMessage, "小红书", "种草", "文案", "笔记", "宣传")) {
-            return """
-                    ## 小红书种草文案
-
-                    ### 标题
-                    %s
-
-                    ### 正文
-                    这次我直接给你一个能发的版本：
-
-                    %s
-
-                    ### 结尾引导
-                    想要的话，我还可以继续帮你补 3 个不同风格的标题。
-
-                    ### 标签
-                    #小红书种草 #文案 #内容创作 #生活方式
-                    """.formatted(buildCopyTitle(userMessage), buildCopyBody(userMessage, background));
+            return WorkPromptTemplates.copyFallback(
+                    buildCopyTitle(userMessage),
+                    buildCopyBody(userMessage, background));
         }
 
         if (matchesAny(userMessage, "ppt", "大纲", "汇报", "总结", "提纲", "方案")) {
-            return """
-                    ## PPT 大纲
-
-                    ### 1. 封面
-                    主题、汇报人、日期
-
-                    ### 2. 目录
-                    背景与目标、核心洞察、行动方案、风险与下一步
-
-                    ### 3. 核心观点
-                    每页只讲一个结论，配 2-3 个支撑点
-
-                    ### 4. 结尾页
-                    一句话结论 + 三条可执行动作
-
-                    ### 参考背景
-                    %s
-                    """.formatted(background);
+            return WorkPromptTemplates.pptFallback(background);
         }
 
         if (matchesAny(userMessage, "改写", "润色", "扩写", "翻译", "优化")) {
-            return """
-                    ## 可直接使用的版本
-
-                    %s
-
-                    ### 参考说明
-                    %s
-                    """.formatted(buildRewriteBody(userMessage), background);
+            return WorkPromptTemplates.rewriteFallback(buildRewriteBody(userMessage), background);
         }
 
-        return """
-                ## 工作模块输出
-
-                ### 你要的结果
-                %s
-
-                ### 参考背景
-                %s
-
-                ### 交付口径
-                先明确目标，再聚焦关键矛盾，最后给出可落地的行动路径。
-                """.formatted(buildGeneralBody(userMessage), background);
+        return WorkPromptTemplates.generalFallback(buildGeneralBody(userMessage), background);
     }
 
     private boolean matchesAny(String input, String... keywords) {
@@ -137,33 +89,15 @@ public class WorkAgent {
     }
 
     private String buildCopyBody(String userMessage, String background) {
-        return """
-                围绕这句需求来写：%s
-
-                最近我一直在想，真正打动人的内容，不是把信息讲满，而是让人看完就想试一次。
-
-                %s
-
-                如果你也想把这件事表达得更有吸引力，关键不是堆形容词，而是把真实感、细节感和使用场景讲出来。
-                """.formatted(userMessage, buildBackgroundHint(background));
+        return WorkPromptTemplates.copyBody(userMessage, buildBackgroundHint(background));
     }
 
     private String buildRewriteBody(String userMessage) {
-        return """
-                保留原意，收紧句子，去掉多余修饰，让表达更利落。
-
-                原句：%s
-
-                改写后：更清晰、更直接、更像人说的话。
-                """.formatted(userMessage);
+        return WorkPromptTemplates.rewriteBody(userMessage);
     }
 
     private String buildGeneralBody(String userMessage) {
-        return """
-                %s
-
-                先把目标定清楚，再把动作拆具体，最后用最少的话把结论说透。
-                """.formatted(userMessage);
+        return WorkPromptTemplates.generalBody(userMessage);
     }
 
     private String buildBackgroundHint(String background) {

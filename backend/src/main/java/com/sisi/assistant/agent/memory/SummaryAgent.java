@@ -7,6 +7,7 @@ import com.sisi.assistant.persistence.entity.ConversationSummaryEntity;
 import com.sisi.assistant.persistence.mapper.ChatRecordMapper;
 import com.sisi.assistant.persistence.mapper.ConversationSummaryMapper;
 import com.sisi.assistant.service.DeepSeekClient;
+import com.sisi.assistant.service.prompt.MemoryPromptTemplates;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,15 +29,6 @@ import java.util.List;
 public class SummaryAgent {
 
     private static final Logger log = LoggerFactory.getLogger(SummaryAgent.class);
-
-    private static final String SUMMARY_SYSTEM_PROMPT = """
-            你是一个对话摘要助手。将多轮对话历史压缩为一段简洁的摘要。
-            要求：
-            - 200-400字
-            - 保留关键事实、情感变化、未完成的话题和用户的偏好信息
-            - 使用第三人称叙述
-            - 不要输出"对话摘要"等标题，直接输出摘要正文
-            """;
 
     private final DeepSeekClient deepSeekClient;
     private final ChatRecordMapper chatRecordMapper;
@@ -97,8 +89,8 @@ public class SummaryAgent {
             return reactor.core.publisher.Mono.just("");
         }
 
-        String prompt = "请将以下对话压缩为摘要：\n\n%s".formatted(dialogue);
-        return deepSeekClient.chat(SUMMARY_SYSTEM_PROMPT, prompt, null)
+        String prompt = MemoryPromptTemplates.turnSummaryPrompt(dialogue);
+        return deepSeekClient.chat(MemoryPromptTemplates.summarySystemPrompt(), prompt, null)
                 .flatMap(summary -> {
                     if (summary.isBlank()) {
                         return reactor.core.publisher.Mono.just("");
@@ -117,8 +109,8 @@ public class SummaryAgent {
             return reactor.core.publisher.Mono.just("");
         }
 
-        String prompt = "请将以下近期对话压缩为一段周期性摘要：\n\n%s".formatted(dialogue);
-        return deepSeekClient.chat(SUMMARY_SYSTEM_PROMPT, prompt, null)
+        String prompt = MemoryPromptTemplates.periodicSummaryPrompt(dialogue);
+        return deepSeekClient.chat(MemoryPromptTemplates.summarySystemPrompt(), prompt, null)
                 .flatMap(summary -> {
                     if (summary.isBlank()) {
                         return reactor.core.publisher.Mono.just("");

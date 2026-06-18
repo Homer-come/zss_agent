@@ -5,6 +5,7 @@ import com.sisi.assistant.common.dto.AgentRoute;
 import com.sisi.assistant.common.dto.ChatChunk;
 import com.sisi.assistant.service.DeepSeekClient;
 import com.sisi.assistant.service.PromptBuilder;
+import com.sisi.assistant.service.prompt.LifePromptTemplates;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -29,11 +30,7 @@ public class LifeAgent {
      * 保留了 enforceLifeOpening 硬规则守门，确保人格一致性。
      */
     public Flux<ChatChunk> handleWithPrompt(PromptBuilder.PromptAssembly prompt, String userMessage) {
-        String fallback = toneService.enforceLifeOpening("""
-                我听见啦。希望你要开心哦，然后我可以为您做点什么呢？
-
-                按现在的信息，我建议先选最稳妥的一步：如果是想吃点东西，就来一杯热奶茶配清淡主食；如果是心里累，就先把今天最烦的一件事告诉我，我陪你拆开。
-                """);
+        String fallback = toneService.enforceLifeOpening(LifePromptTemplates.fallback());
 
         return Flux.concat(
                 Flux.just(ChatChunk.status(AgentRoute.LIFE, "正在检索长期记忆和用户画像，帮你给出更贴心的回应...")),
