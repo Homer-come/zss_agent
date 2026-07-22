@@ -1,0 +1,22 @@
+# 构建上下文忽略：避免敏感信息、IDE 配置、依赖进入镜像
+.git
+.gitignore
+.idea
+.DS_Store
+*.log
+logs/
+
+# 不应进镜像的环境文件（除非真的要在容器里读）
+.env
+.env.*
+
+# 前端相关
+frontend/node_modules
+frontend/dist
+
+# 后端构建产物
+**/target
+
+# 文档与脚本（不参与运行）
+docs/
+*.md
